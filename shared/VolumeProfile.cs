@@ -31,6 +31,7 @@ namespace OrderFlowSuite
 		public double POC { get; private set; }		// price of highest-volume level
 		public double VAH { get; private set; }		// value area high (top of 70% volume)
 		public double VAL { get; private set; }		// value area low
+		public double MaxLevelVolume { get; private set; }	// volume at the POC (for scaling a histogram)
 
 		public VolumeProfile()
 		{
@@ -107,6 +108,7 @@ namespace OrderFlowSuite
 				if (kv.Key > maxKey) maxKey = kv.Key;
 			}
 			POC = pocKey * tickSize;
+			MaxLevelVolume = pocVol;
 
 			// Expand outward from POC, always grabbing the heavier neighbor, until
 			// we've captured the requested share of total volume (classic VA method).
@@ -145,6 +147,17 @@ namespace OrderFlowSuite
 		public bool IsReady()
 		{
 			return bins.Count > 0 && !double.IsNaN(POC);
+		}
+
+		// Export an immutable snapshot of (price, volume) levels. Used by the
+		// rendering indicator so it never reads the live dictionary while it mutates
+		// (OnRender runs on a different thread than OnBarUpdate).
+		public List<KeyValuePair<double, double>> GetLevels()
+		{
+			List<KeyValuePair<double, double>> list = new List<KeyValuePair<double, double>>(bins.Count);
+			foreach (KeyValuePair<long, double> kv in bins)
+				list.Add(new KeyValuePair<double, double>(kv.Key * tickSize, kv.Value));
+			return list;
 		}
 	}
 }

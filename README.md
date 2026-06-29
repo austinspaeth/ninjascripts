@@ -9,6 +9,9 @@ NinjaTrader 8 (NinjaScript / C#) trading tools.
 | `auction-context/` | **Indicator 1** — Auction Context / Market Regime panel. |
 | `absorption-exhaustion/` | **Indicator 2** — Absorption / Exhaustion / Delta-Divergence detector. |
 | `trade-quality/` | **Indicator 3** — Trade Quality / Risk grader (A/B/C/D/Skip). |
+| `flow-strip/` | **Indicator 4** — Buying/selling pressure heat strip (color-graded panel). |
+| `risk-zones/` | **Indicator 5** — Stop-loss zone + take-profit target lines. |
+| `volume-profile/` | **Indicator 6** — Horizontal volume-at-price profile (POC / value area). |
 
 ---
 
@@ -36,18 +39,21 @@ NinjaScript compiles every `.cs` file under `Documents\NinjaTrader 8\bin\Custom\
    (`OrderFlowSuiteEnums.cs`, `KeyLevel.cs`, `SessionLevels.cs`, `VWAPCalculator.cs`, `VolumeProfile.cs`, `OrderFlowBarStats.cs`, `SwingLevelDetector.cs`, `VolatilityHelper.cs`, `TradeQualityScore.cs`, `SuiteContext.cs`)
 
 2. **Indicators → Indicators**
-   Copy the three indicator files into:
+   Copy the indicator files into:
    `Documents\NinjaTrader 8\bin\Custom\Indicators\`
-   (`AuctionContext.cs`, `AbsorptionExhaustion.cs`, `TradeQuality.cs`)
+   (`AuctionContext.cs`, `AbsorptionExhaustion.cs`, `TradeQuality.cs`, `FlowStrip.cs`, `RiskZones.cs`, `VolumeProfileMap.cs`)
 
 3. **Compile:** open the **NinjaScript Editor** in NinjaTrader and press **F5** (or click Compile). All files compile together. Fix nothing if it says "0 errors".
 
-4. **Add to a chart:** right-click chart → **Indicators…**. The three appear as:
+4. **Add to a chart:** right-click chart → **Indicators…**. They appear as:
    - `OFS_AuctionContext`
    - `OFS_AbsorptionExhaustion`
    - `OFS_TradeQuality`
+   - `OFS_FlowStrip` (adds its own panel under price)
+   - `OFS_RiskZones`
+   - `OFS_VolumeProfile`
 
-   **Add them in that order** (1 → 2 → 3). Order isn't strictly required, but it makes the dependency obvious and keeps the shared context populated for the consumers.
+   **Add 1 → 2 → 3 first.** Order isn't strictly required, but it keeps the shared context populated for the consumers (RiskZones reads the regime from AuctionContext; FlowStrip and VolumeProfile are self-contained).
 
 5. **For historical order flow** (optional but recommended): in the chart's **Data Series** window set **Tick Replay = true** and make sure tick data is downloaded for the instrument. Without it, Indicator 2's delta-based events only appear in real time (see Data Requirements).
 
@@ -89,6 +95,24 @@ Tells you the **bias**, not the trade:
 
 ### 3. Trade Quality (panel + optional lines)
 Shows a graded plan: **A / B / C / D / Skip**, the entry/stop/target, R/R, distance from VWAP, nearest level, volatility, and a list of `+` reasons and `x` warnings. In **Auto** mode it estimates the plan from structure + regime; in **Manual** mode enter your own direction/entry/stop/target and it grades exactly those.
+
+### 4. Flow Strip (panel under price)
+A color histogram of buying/selling pressure (order-flow delta blended with momentum):
+- **Bright lime** = strong, aggressive buying — likely to continue up.
+- **Dark/dull green** = buying but **softening** — your early "momentum fading, think about exiting" warning.
+- **Gray** = neutral / indecision.
+- **Orange → red** = sellers taking over.
+Bars above the zero line = net buyers in control; below = net sellers. Watch for the green *dulling and shrinking* — that often precedes a turn before price shows it. Tune `SmoothingPeriod` (higher = calmer), and `DeltaWeight` vs `MomentumWeight` to taste.
+
+### 5. Risk Zones (chart overlay)
+Paints, for the current bias, a **red shaded stop zone** beyond the nearest swing (with an ATR cushion), a gold **entry** line, and up to three green **take-profit** lines labeled with their price and R-multiple. Direction comes from the Auction Context regime, or set `OverrideDirection` to Long/Short. It's a **live planning overlay** — the lines update with price/structure each bar (that's expected, not repainting). Targets snap to nearby key levels when available, otherwise fall back to R-multiples.
+
+### 6. Volume Profile (chart overlay)
+A sideways histogram of how much traded at each price this session:
+- **Orange line = POC** (most-traded price): the strongest magnet / support-resistance.
+- **Brighter bars** are inside the **value area** (~70% of volume); dim bars are outside.
+- Long bar = heavy trade at that price (price tends to pause/react there); thin bar = a gap the market moved through quickly.
+Precise at-price volume needs **Tick Replay**; without it the profile is approximated from bars (still good for locating levels). Adjust `Profile width %` and `Bar opacity` for readability.
 
 ---
 
