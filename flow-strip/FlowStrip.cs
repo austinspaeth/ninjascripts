@@ -49,12 +49,14 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private Series<double>	absDelta;
 		private Series<double>	rawScore;
 		private readonly Dictionary<int, Brush> palette = new Dictionary<int, Brush>();
+		private Brush	tipBuy;
+		private Brush	tipSell;
 
 		protected override void OnStateChange()
 		{
 			if (State == State.SetDefaults)
 			{
-				Description			= @"Buying/selling pressure heat strip: order-flow delta blended with momentum, color-graded from lime (strong buying) through dark green (softening) to red (selling). Part of OrderFlowSuite.";
+				Description			= @"Buying/selling pressure heat strip: order-flow delta blended with momentum, color-graded lime->dark green->grey->red. Absorption-aware: bars where heavy delta fails to move price grey out (with a colored tip showing the side), so you don't trade absorbed pressure as if it were directional. Part of OrderFlowSuite.";
 				Name				= "OFS_FlowStrip";
 				Calculate			= Calculate.OnEachTick;
 				IsOverlay			= false;	// separate panel under price
@@ -71,13 +73,26 @@ namespace NinjaTrader.NinjaScript.Indicators
 				NeutralZone			= 10;	// |score| below this renders gray
 				ApproximateDeltaWithoutTicks = true;
 
+				HighlightAbsorption	= true;
+				AbsorptionSensitivity = 0.6;	// lower = grays out more aggressively
+				AbsorptionMinDelta	= 0.8;		// only bars with >= ~normal delta can be "absorbed"
+				ShowDirectionTip	= true;
+				TipThreshold		= 0.40;		// show the colored cap once absorption passes this
+
+				// Plot 0 = the bar body (greys out when absorbed).
+				// Plot 1 = a colored dot at the bar's tip showing the side the volume
+				//          came from, drawn only when a bar is being absorbed.
 				AddPlot(new Stroke(Brushes.Gray, 4), PlotStyle.Bar, "Flow");
+				AddPlot(new Stroke(Brushes.Transparent, 7), PlotStyle.Dot, "AbsorbTip");
 			}
 			else if (State == State.DataLoaded)
 			{
 				stats		= new OrderFlowBarStats();
 				absDelta	= new Series<double>(this);
 				rawScore	= new Series<double>(this);
+
+				tipBuy		= new SolidColorBrush(Color.FromRgb(80, 255, 80));  tipBuy.Freeze();
+				tipSell		= new SolidColorBrush(Color.FromRgb(255, 50, 50));  tipSell.Freeze();
 			}
 		}
 
@@ -97,6 +112,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 			if (CurrentBar < Math.Max(ATRPeriod, Math.Max(NormalizationLookback, MomentumLookback)) + 1)
 			{
 				Values[0][0] = 0;
+				Values[1][0] = 0;
 				return;
 			}
 
@@ -119,8 +135,27 @@ namespace NinjaTrader.NinjaScript.Indicators
 			rawScore[0] = Clamp(raw, -150, 150);
 			double score = Clamp(EMA(rawScore, SmoothingPeriod)[0], -100, 100);
 
+			// --- absorption: lots of delta, little price progress = being absorbed ---
+			// efficiency = how far price moved (in ATR) per unit of relative delta.
+			// Low efficiency on a strong-delta bar => the aggressor is getting absorbed,
+			// so we drain the bar's body toward grey (don't trust it as directional).
+			double absorption = 0;
+			double deltaStrength = Math.Abs(normDelta);
+			if (HighlightAbsorption && deltaStrength >= AbsorptionMinDelta && atr > 0)
+			{
+				double priceProgress = Math.Abs(Close[0] - Open[0]) / atr;	// 0 = flat bar
+				double efficiency = priceProgress / deltaStrength;
+				absorption = Clamp(1.0 - (efficiency / AbsorptionSensitivity), 0, 1);
+			}
+
 			Values[0][0] = score;
-			PlotBrushes[0][0] = FlowBrush(score);
+			PlotBrushes[0][0] = FlowBrush(score, absorption);
+
+			// directional cap: bright dot at the tip showing which side the (absorbed)
+			// volume came from. Only shown when the bar is meaningfully absorbed.
+			Values[1][0] = score;
+			bool showTip = ShowDirectionTip && absorption >= TipThreshold && Math.Abs(score) >= NeutralZone;
+			PlotBrushes[1][0] = showTip ? (score >= 0 ? tipBuy : tipSell) : Brushes.Transparent;
 		}
 
 		// crude per-bar delta proxy when no tick data exists for the bar
@@ -136,14 +171,17 @@ namespace NinjaTrader.NinjaScript.Indicators
 			return v < lo ? lo : (v > hi ? hi : v);
 		}
 
-		// Map a -100..+100 score to a cached, frozen gradient brush.
-		private Brush FlowBrush(double score)
+		// Map a -100..+100 score (and an absorption amount) to a cached, frozen brush.
+		// The directional gradient is blended toward grey as absorption rises.
+		private Brush FlowBrush(double score, double absorption)
 		{
 			int bucket = (int)(Math.Round(score / 5.0) * 5);
 			if (bucket > 100) bucket = 100; if (bucket < -100) bucket = -100;
+			int absBucket = (int)Math.Round(Clamp(absorption, 0, 1) * 10);	// 0..10
 
+			int key = (bucket + 200) * 100 + absBucket;
 			Brush cached;
-			if (palette.TryGetValue(bucket, out cached)) return cached;
+			if (palette.TryGetValue(key, out cached)) return cached;
 
 			byte r, g, b;
 			if (Math.Abs(bucket) < NeutralZone)
@@ -165,9 +203,16 @@ namespace NinjaTrader.NinjaScript.Indicators
 				b = (byte)(45 * (1 - t));
 			}
 
+			// blend toward grey (cap at 0.88 so a faint directional tint survives)
+			double a = Math.Min(0.88, absBucket / 10.0);
+			const byte grey = 120;
+			r = (byte)(r * (1 - a) + grey * a);
+			g = (byte)(g * (1 - a) + grey * a);
+			b = (byte)(b * (1 - a) + grey * a);
+
 			SolidColorBrush br = new SolidColorBrush(Color.FromRgb(r, g, b));
 			br.Freeze();
-			palette[bucket] = br;
+			palette[key] = br;
 			return br;
 		}
 
@@ -210,6 +255,29 @@ namespace NinjaTrader.NinjaScript.Indicators
 		[NinjaScriptProperty]
 		[Display(Name = "Approximate delta without ticks", Order = 8, GroupName = "Logic")]
 		public bool ApproximateDeltaWithoutTicks { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Highlight absorption (grey out)", Description = "Drain a bar's color toward grey when heavy delta isn't moving price (absorption).", Order = 1, GroupName = "Absorption")]
+		public bool HighlightAbsorption { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(0.05, 5.0)]
+		[Display(Name = "Absorption sensitivity", Description = "Lower = greys out more easily. It's the price progress (in ATR) per unit of relative delta at which a bar is considered fully working.", Order = 2, GroupName = "Absorption")]
+		public double AbsorptionSensitivity { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(0.0, 10.0)]
+		[Display(Name = "Absorption min delta", Description = "Only bars with at least this much relative delta (1 = normal) can be flagged absorbed.", Order = 3, GroupName = "Absorption")]
+		public double AbsorptionMinDelta { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Show direction tip", Description = "Draw a bright dot at the tip of an absorbed bar showing which side the volume came from.", Order = 4, GroupName = "Absorption")]
+		public bool ShowDirectionTip { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(0.0, 1.0)]
+		[Display(Name = "Tip threshold (0-1)", Description = "How absorbed a bar must be before the colored tip appears.", Order = 5, GroupName = "Absorption")]
+		public double TipThreshold { get; set; }
 		#endregion
 	}
 }

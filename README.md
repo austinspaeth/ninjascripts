@@ -104,6 +104,8 @@ A color histogram of buying/selling pressure (order-flow delta blended with mome
 - **Orange → red** = sellers taking over.
 Bars above the zero line = net buyers in control; below = net sellers. Watch for the green *dulling and shrinking* — that often precedes a turn before price shows it. Tune `SmoothingPeriod` (higher = calmer), and `DeltaWeight` vs `MomentumWeight` to taste.
 
+**Absorption-aware:** when heavy delta *fails to move price* (someone is absorbing it), the bar's body **greys out** so you don't read it as directional — and a bright **dot at the bar's tip** shows which side the absorbed volume came from. So a wall of grey sell bars with red tips at support = aggressive selling getting eaten = watch for a bounce (and look for the `Bid Absorb` marker from Indicator 2). Controls live under the **Absorption** group: `HighlightAbsorption`, `AbsorptionSensitivity` (lower = greys out more easily), `AbsorptionMinDelta`, `ShowDirectionTip`, `TipThreshold`. Note: this is most meaningful with real order flow (live tape or Tick Replay) — with approximated delta the divergence is weaker by construction.
+
 ### 5. Risk Zones (chart overlay)
 Paints, for the current bias, a **red shaded stop zone** beyond the nearest swing (with an ATR cushion), a gold **entry** line, and up to three green **take-profit** lines labeled with their price and R-multiple. Direction comes from the Auction Context regime, or set `OverrideDirection` to Long/Short. It's a **live planning overlay** — the lines update with price/structure each bar (that's expected, not repainting). Targets snap to nearby key levels when available, otherwise fall back to R-multiples.
 
